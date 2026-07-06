@@ -56,7 +56,10 @@ def decode_mime_words(value):
     decoded = []
     for text, charset in parts:
         if isinstance(text, bytes):
-            decoded.append(text.decode(charset or "utf-8", errors="replace"))
+            try:
+                decoded.append(text.decode(charset or "utf-8", errors="replace"))
+            except LookupError:
+                decoded.append(text.decode("utf-8", errors="replace"))
         else:
             decoded.append(text)
     return "".join(decoded)
