@@ -22,6 +22,7 @@ import sys
 from datetime import datetime, timedelta
 from email.header import decode_header
 from email.parser import BytesHeaderParser
+from email.utils import parseaddr
 
 NEWSLETTER_HEADERS = ("list-unsubscribe", "list-id", "list-post")
 BULK_PRECEDENCE_VALUES = ("bulk", "list", "junk")
@@ -36,6 +37,7 @@ SUBJECT_KEYWORDS = (
     "scopri", "novità", "novita", "iscriviti",
 )
 TRASH_NAME_HINTS = ("trash", "cestino", "eliminat", "deleted")
+ALLOWLIST_SENDER_DOMAINS = ("booking.com",)
 
 
 def load_config(path):
@@ -75,6 +77,10 @@ def quote_mailbox(name):
 def classify(headers):
     """Return a reason string if the message looks like a newsletter/spam, else None."""
     lower_headers = {k.lower(): v for k, v in headers.items()}
+
+    sender_address = parseaddr(decode_mime_words(headers.get("From", "")))[1].lower()
+    if any(sender_address.endswith("@" + d) or sender_address.endswith("." + d) for d in ALLOWLIST_SENDER_DOMAINS):
+        return None
 
     for key in NEWSLETTER_HEADERS:
         if key in lower_headers:
