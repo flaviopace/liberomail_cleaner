@@ -38,7 +38,7 @@ SUBJECT_KEYWORDS = (
 )
 TRASH_NAME_HINTS = ("trash", "cestino", "eliminat", "deleted")
 ALLOWLIST_SENDER_DOMAINS = ("booking.com",)
-ALLOWLIST_SENDER_KEYWORDS = ("claudio pace",)
+ALLOWLIST_SENDER_KEYWORDS = ("claudio pace", "pantaleo mautone")
 
 
 def load_config(path):
