@@ -114,6 +114,15 @@ def fetch_headers(imap, uid):
     return dict(BytesHeaderParser().parsebytes(raw).items())
 
 
+def parse_folder_line(line):
+    text = line.decode("utf-8", errors="replace")
+    flags_match = re.match(r"\((.*?)\)", text)
+    flags = flags_match.group(1) if flags_match else ""
+    name_match = re.search(r'"([^"]+)"\s*$', text)
+    name = name_match.group(1) if name_match else text.split()[-1]
+    return flags, name
+
+
 def list_folders(imap):
     typ, data = imap.list()
     if typ != "OK":
@@ -123,6 +132,18 @@ def list_folders(imap):
         print(" ", line.decode("utf-8", errors="replace"))
 
 
+def all_selectable_folders(imap):
+    typ, data = imap.list()
+    if typ != "OK":
+        sys.exit("failed to list folders")
+    folders = []
+    for line in data:
+        flags, name = parse_folder_line(line)
+        if "\\Noselect" not in flags:
+            folders.append(name)
+    return folders
+
+
 def guess_trash_folder(imap):
     typ, data = imap.list()
     if typ != "OK":
@@ -130,13 +151,71 @@ def guess_trash_folder(imap):
     candidates = []
     for line in data:
         text = line.decode("utf-8", errors="replace")
-        match = re.search(r'"([^"]+)"\s*$', text)
-        name = match.group(1) if match else text.split()[-1]
+        _, name = parse_folder_line(line)
         if any(hint in text.lower() for hint in TRASH_NAME_HINTS):
             candidates.append(name)
     if len(candidates) == 1:
         return candidates[0]
     return None
+
+
+def fetch_size_and_headers(imap, uids):
+    """Batch-fetch RFC822.SIZE + basic headers for a list of uids. Yields dicts."""
+    fields = "(FROM SUBJECT DATE)"
+    batch_size = 300
+    for i in range(0, len(uids), batch_size):
+        batch = uids[i : i + batch_size]
+        uid_set = b",".join(batch)
+        typ, data = imap.uid(
+            "fetch", uid_set, f"(UID RFC822.SIZE BODY.PEEK[HEADER.FIELDS {fields}])"
+        )
+        if typ != "OK" or not data:
+            continue
+        for item in data:
+            if not isinstance(item, tuple):
+                continue
+            meta, raw_headers = item
+            uid_match = re.search(rb"UID (\d+)", meta)
+            size_match = re.search(rb"RFC822\.SIZE (\d+)", meta)
+            if not uid_match or not size_match:
+                continue
+            headers = dict(BytesHeaderParser().parsebytes(raw_headers).items())
+            yield {
+                "uid": uid_match.group(1),
+                "size": int(size_match.group(1)),
+                "headers": headers,
+            }
+
+
+def report_large_read_messages(imap, folders, min_size_bytes, top_n):
+    results = []
+    for folder in folders:
+        typ, _ = imap.select(quote_mailbox(folder), readonly=True)
+        if typ != "OK":
+            print(f"  (skipping unreadable folder '{folder}')", file=sys.stderr)
+            continue
+
+        typ, data = imap.uid("search", None, "(SEEN)")
+        if typ != "OK" or not data or not data[0]:
+            continue
+        uids = data[0].split()
+
+        for entry in fetch_size_and_headers(imap, uids):
+            if entry["size"] >= min_size_bytes:
+                results.append((entry["size"], folder, entry["uid"], entry["headers"]))
+
+    results.sort(key=lambda r: r[0], reverse=True)
+
+    print(f"\n{len(results)} read message(s) at or above {min_size_bytes / (1024 * 1024):.1f} MB:\n")
+    for size, folder, uid, headers in results[:top_n]:
+        sender = decode_mime_words(headers.get("From", "?"))
+        subject = decode_mime_words(headers.get("Subject", "?"))
+        date = headers.get("Date", "?")
+        mb = size / (1024 * 1024)
+        print(f"[{mb:7.2f} MB] folder={folder!r} uid={uid.decode()} date={date!r} from={sender!r} subject={subject!r}")
+
+    if len(results) > top_n:
+        print(f"\n... and {len(results) - top_n} more (use --top to show more).")
 
 
 def main():
@@ -150,6 +229,10 @@ def main():
     parser.add_argument("--days", type=int, default=730, help="age threshold in days (default: 730, ~2 years)")
     parser.add_argument("--trash-folder", default=None, help="destination folder for matched emails; auto-detected if omitted")
     parser.add_argument("--list-folders", action="store_true", help="list IMAP folders and exit")
+    parser.add_argument("--report-large-attachments", action="store_true", help="report already-read messages at/above --min-size-mb, sorted largest first; read-only, exits without touching --days/spam logic")
+    parser.add_argument("--min-size-mb", type=float, default=5.0, help="size threshold in MB for --report-large-attachments (default: 5)")
+    parser.add_argument("--all-folders", action="store_true", help="with --report-large-attachments, scan every selectable folder instead of just --folder")
+    parser.add_argument("--top", type=int, default=50, help="max rows to print for --report-large-attachments (default: 50)")
     parser.add_argument("--confirm", action="store_true", help="actually move matching emails to trash (default is dry-run report only)")
     parser.add_argument("--limit", type=int, default=None, help="max number of matching emails to process")
     parser.add_argument("-v", "--verbose", action="store_true", help="print every candidate considered, not just matches")
@@ -163,6 +246,11 @@ def main():
     try:
         if args.list_folders:
             list_folders(imap)
+            return
+
+        if args.report_large_attachments:
+            folders = all_selectable_folders(imap) if args.all_folders else [args.folder]
+            report_large_read_messages(imap, folders, int(args.min_size_mb * 1024 * 1024), args.top)
             return
 
         typ, _ = imap.select(quote_mailbox(args.folder), readonly=not args.confirm)

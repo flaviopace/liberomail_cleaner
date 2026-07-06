@@ -69,6 +69,21 @@ python3 clean_libero.py --days 730 --folder INBOX --trash-folder trash --confirm
 This copies each matched message to `--trash-folder` and expunges it from
 the source folder. Without `--confirm`, nothing is ever changed.
 
+### Find large messages taking up space
+
+Read-only report of already-read (`\Seen`) messages at or above a size
+threshold, sorted largest first — useful when the mailbox is close to its
+quota. This mode ignores `--days`/spam-detection entirely and never deletes
+or moves anything.
+
+```bash
+python3 clean_libero.py --report-large-attachments --all-folders --min-size-mb 5
+```
+
+Drop `--all-folders` to scan only `--folder`. Size is the message's total
+`RFC822.SIZE` (headers + body + attachments), which is what actually counts
+against your storage quota.
+
 ## CLI options
 
 | Flag | Default | Description |
@@ -81,6 +96,10 @@ the source folder. Without `--confirm`, nothing is ever changed.
 | `--confirm` | off | Actually move matches to trash (otherwise dry-run only) |
 | `--limit` | none | Cap the number of matching emails processed |
 | `-v`, `--verbose` | off | Also print non-matching candidates |
+| `--report-large-attachments` | off | Report large already-read messages instead of cleaning (read-only) |
+| `--min-size-mb` | `5` | Size threshold in MB for `--report-large-attachments` |
+| `--all-folders` | off | With `--report-large-attachments`, scan every folder instead of just `--folder` |
+| `--top` | `50` | Max rows to print for `--report-large-attachments` |
 
 ## Notes
 
