@@ -38,6 +38,7 @@ SUBJECT_KEYWORDS = (
 )
 TRASH_NAME_HINTS = ("trash", "cestino", "eliminat", "deleted")
 ALLOWLIST_SENDER_DOMAINS = ("booking.com",)
+ALLOWLIST_SENDER_KEYWORDS = ("claudio pace",)
 
 
 def load_config(path):
@@ -74,12 +75,24 @@ def quote_mailbox(name):
     return f'"{escaped}"'
 
 
+def is_allowlisted_sender(headers):
+    from_header = decode_mime_words(headers.get("From", ""))
+    sender_address = parseaddr(from_header)[1].lower()
+    if any(sender_address.endswith("@" + d) or sender_address.endswith("." + d) for d in ALLOWLIST_SENDER_DOMAINS):
+        return True
+    return any(kw in from_header.lower() for kw in ALLOWLIST_SENDER_KEYWORDS)
+
+
+def has_attachment(headers):
+    content_type = headers.get("Content-Type", "").lower()
+    return "multipart/mixed" in content_type
+
+
 def classify(headers):
     """Return a reason string if the message looks like a newsletter/spam, else None."""
     lower_headers = {k.lower(): v for k, v in headers.items()}
 
-    sender_address = parseaddr(decode_mime_words(headers.get("From", "")))[1].lower()
-    if any(sender_address.endswith("@" + d) or sender_address.endswith("." + d) for d in ALLOWLIST_SENDER_DOMAINS):
+    if is_allowlisted_sender(headers):
         return None
 
     for key in NEWSLETTER_HEADERS:
@@ -104,7 +117,7 @@ def classify(headers):
 
 
 def fetch_headers(imap, uid):
-    fields = "(FROM SUBJECT DATE LIST-UNSUBSCRIBE LIST-ID LIST-POST PRECEDENCE)"
+    fields = "(FROM SUBJECT DATE CONTENT-TYPE LIST-UNSUBSCRIBE LIST-ID LIST-POST PRECEDENCE)"
     typ, data = imap.uid(
         "fetch", uid, f"(BODY.PEEK[HEADER.FIELDS {fields}])"
     )
@@ -235,6 +248,8 @@ def main():
     parser.add_argument("--top", type=int, default=50, help="max rows to print for --report-large-attachments (default: 50)")
     parser.add_argument("--confirm", action="store_true", help="actually move matching emails to trash (default is dry-run report only)")
     parser.add_argument("--limit", type=int, default=None, help="max number of matching emails to process")
+    parser.add_argument("--read-state", choices=("unseen", "seen", "any"), default="unseen", help="which messages to consider by read state (default: unseen)")
+    parser.add_argument("--require-attachment", action="store_true", help="match by presence of an attachment (Content-Type: multipart/mixed) instead of the newsletter/spam heuristic")
     parser.add_argument("-v", "--verbose", action="store_true", help="print every candidate considered, not just matches")
     args = parser.parse_args()
 
@@ -260,19 +275,29 @@ def main():
         cutoff = datetime.now() - timedelta(days=args.days)
         date_str = cutoff.strftime("%d-%b-%Y")
 
-        typ, data = imap.uid("search", None, f'(UNSEEN SENTBEFORE "{date_str}")')
+        read_state_key = {"unseen": "UNSEEN", "seen": "SEEN", "any": None}[args.read_state]
+        criteria_parts = [f'SENTBEFORE "{date_str}"']
+        if read_state_key:
+            criteria_parts.insert(0, read_state_key)
+        criteria = "(" + " ".join(criteria_parts) + ")"
+
+        typ, data = imap.uid("search", None, criteria)
         if typ != "OK":
             sys.exit("IMAP search failed")
         uids = data[0].split()
         if args.limit:
             uids = uids[: args.limit]
 
-        print(f"{len(uids)} unread message(s) older than {args.days} days found in '{args.folder}'.")
+        state_desc = {"unseen": "unread", "seen": "read (opened)", "any": "read or unread"}[args.read_state]
+        print(f"{len(uids)} {state_desc} message(s) older than {args.days} days found in '{args.folder}'.")
 
         matched = []
         for uid in uids:
             headers = fetch_headers(imap, uid)
-            reason = classify(headers)
+            if args.require_attachment:
+                reason = None if is_allowlisted_sender(headers) else ("has attachment (multipart/mixed)" if has_attachment(headers) else None)
+            else:
+                reason = classify(headers)
             sender = decode_mime_words(headers.get("From", "?"))
             subject = decode_mime_words(headers.get("Subject", "?"))
             date = headers.get("Date", "?")
@@ -282,7 +307,8 @@ def main():
             elif args.verbose:
                 print(f"[skip]  uid={uid.decode()} date={date!r} from={sender!r} subject={subject!r}")
 
-        print(f"\n{len(matched)} of {len(uids)} candidate(s) look like newsletter/spam and would be moved to trash.")
+        match_desc = "have an attachment" if args.require_attachment else "look like newsletter/spam"
+        print(f"\n{len(matched)} of {len(uids)} candidate(s) {match_desc} and would be moved to trash.")
 
         if not matched:
             return

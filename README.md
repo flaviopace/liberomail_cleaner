@@ -8,15 +8,22 @@ No third-party dependencies — stdlib only (`imaplib`, `email`, `argparse`, `js
 
 ## What it does
 
-A message is flagged for cleanup only if **all three** conditions hold:
+There are two matching modes, both gated on age and read state, controlled
+by `--days` and `--read-state` (`unseen` / `seen` / `any`; default `unseen`):
 
-1. **Old** — sent before a cutoff date (default: 730 days / ~2 years ago).
-2. **Unread** — the `\Seen` flag is not set (uses IMAP `UNSEEN`).
-3. **Looks like a newsletter/spam**, based on headers and keywords:
-   - `List-Unsubscribe`, `List-Id`, or `List-Post` header present
-   - `Precedence: bulk` / `list` / `junk`
-   - Sender contains keywords like `noreply`, `newsletter`, `marketing`, `info@`, etc.
-   - Subject contains keywords like `unsubscribe`, `disiscriviti`, `offerta`, `sconto`, `promo`, etc.
+1. **Newsletter/spam heuristic (default)** — flags a message if it also:
+   - has a `List-Unsubscribe`, `List-Id`, or `List-Post` header
+   - has `Precedence: bulk` / `list` / `junk`
+   - the sender contains keywords like `noreply`, `newsletter`, `marketing`, `info@`, etc.
+   - the subject contains keywords like `unsubscribe`, `disiscriviti`, `offerta`, `sconto`, `promo`, etc.
+2. **Has an attachment** (`--require-attachment`) — flags a message if its
+   top-level `Content-Type` is `multipart/mixed`, regardless of
+   newsletter/spam signals. Useful for reclaiming space, but broad — it
+   catches real documents too, so review the dry-run output first.
+
+Certain senders are always excluded regardless of mode
+(`ALLOWLIST_SENDER_DOMAINS` / `ALLOWLIST_SENDER_KEYWORDS` in the script —
+currently `booking.com` and `claudio pace`).
 
 Fetching only reads headers with `BODY.PEEK`, so scanning never marks a
 message as read.
@@ -100,6 +107,8 @@ against your storage quota.
 | `--min-size-mb` | `5` | Size threshold in MB for `--report-large-attachments` |
 | `--all-folders` | off | With `--report-large-attachments`, scan every folder instead of just `--folder` |
 | `--top` | `50` | Max rows to print for `--report-large-attachments` |
+| `--read-state` | `unseen` | `unseen`, `seen`, or `any` — which read state to match |
+| `--require-attachment` | off | Match by attachment presence instead of the newsletter/spam heuristic |
 
 ## Notes
 
