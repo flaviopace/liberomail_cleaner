@@ -37,7 +37,7 @@ SUBJECT_KEYWORDS = (
     "scopri", "novità", "novita", "iscriviti",
 )
 TRASH_NAME_HINTS = ("trash", "cestino", "eliminat", "deleted")
-ALLOWLIST_SENDER_DOMAINS = ("booking.com",)
+ALLOWLIST_SENDER_DOMAINS = ("booking.com", "amdistributori.it")
 ALLOWLIST_SENDER_KEYWORDS = ("claudio pace", "pantaleo mautone")
 
 
