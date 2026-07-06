@@ -38,7 +38,7 @@ SUBJECT_KEYWORDS = (
 )
 TRASH_NAME_HINTS = ("trash", "cestino", "eliminat", "deleted")
 ALLOWLIST_SENDER_DOMAINS = ("booking.com", "amdistributori.it")
-ALLOWLIST_SENDER_KEYWORDS = ("claudio pace", "pantaleo mautone")
+ALLOWLIST_SENDER_KEYWORDS = ("claudio pace", "pantaleo mautone", "tributi@comune.filiano.pz.it")
 
 
 def load_config(path):
@@ -250,6 +250,7 @@ def main():
     parser.add_argument("--limit", type=int, default=None, help="max number of matching emails to process")
     parser.add_argument("--read-state", choices=("unseen", "seen", "any"), default="unseen", help="which messages to consider by read state (default: unseen)")
     parser.add_argument("--require-attachment", action="store_true", help="match by presence of an attachment (Content-Type: multipart/mixed) instead of the newsletter/spam heuristic")
+    parser.add_argument("--match-all", action="store_true", help="match every message meeting --days/--read-state, skipping the newsletter/spam and attachment checks entirely (still respects the sender allowlist)")
     parser.add_argument("-v", "--verbose", action="store_true", help="print every candidate considered, not just matches")
     args = parser.parse_args()
 
@@ -296,6 +297,8 @@ def main():
             headers = fetch_headers(imap, uid)
             if args.require_attachment:
                 reason = None if is_allowlisted_sender(headers) else ("has attachment (multipart/mixed)" if has_attachment(headers) else None)
+            elif args.match_all:
+                reason = None if is_allowlisted_sender(headers) else "matches age/read-state filter (--match-all)"
             else:
                 reason = classify(headers)
             sender = decode_mime_words(headers.get("From", "?"))
@@ -307,7 +310,12 @@ def main():
             elif args.verbose:
                 print(f"[skip]  uid={uid.decode()} date={date!r} from={sender!r} subject={subject!r}")
 
-        match_desc = "have an attachment" if args.require_attachment else "look like newsletter/spam"
+        if args.require_attachment:
+            match_desc = "have an attachment"
+        elif args.match_all:
+            match_desc = "match the age/read-state filter"
+        else:
+            match_desc = "look like newsletter/spam"
         print(f"\n{len(matched)} of {len(uids)} candidate(s) {match_desc} and would be moved to trash.")
 
         if not matched:
